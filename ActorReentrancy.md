@@ -64,7 +64,7 @@ actor ImageLoader {
 }
 ```
 
-Imagine two calls to `image(for:)` with the same `id`, made close together.
+Consider two calls to `image(for:)` with the same `id`, made close together.
 The first call checks `cache`, finds nothing, and reaches the `await` while
 downloading the image. Because the actor is reentrant, the second call can
 run before the first one resumes. It also checks `cache`, also finds
@@ -76,9 +76,9 @@ finishes last.
 The fix isn't to make the actor non-reentrant — Swift doesn't offer that
 option, and losing reentrancy would risk the deadlocks described above.
 Instead, restructure the code so the actor's state stays consistent across
-the `await`. One way to do this is to record that a download is already in
-progress *before* awaiting anything, so a second call can find that record
-and share the result instead of starting its own download:
+the `await`: record that a download is already in progress *before*
+awaiting anything, so a second call finds that record and shares the result
+instead of starting its own download:
 
 ```swift
 actor ImageLoader {
@@ -117,9 +117,12 @@ actor ImageLoader {
 ```
 
 The key change is that `cache[id] = .inProgress(task)` runs synchronously,
-before the first `await`. By the time a second call could reenter the
-actor, the in-progress download is already recorded, so that call awaits
-the same task instead of starting a new one.
+before the first `await`. The first call then awaits `task.value` itself,
+and once the download finishes, updates `cache[id]` to `.ready` — or clears
+the entry if the download throws. By the time a second call could reenter
+the actor, the in-progress download is already recorded: that call finds
+the `.inProgress` entry and awaits the same task instead of starting a new
+one, so it receives the same result (or the same error) as the first call.
 
 As a general rule, don't assume that state you read before an `await` is
 still valid after it. If a method needs to act on state across a

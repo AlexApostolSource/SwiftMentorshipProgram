@@ -15,10 +15,8 @@ I've drafted a section that:
 
 Full draft here: [gist link]
 
-Two things I'd like to confirm before going further:
-1. Should this target `swift-book` (`TSPL.docc/LanguageGuide/Concurrency.md`), or has `swiftlang/docs` taken over as the destination for new Concurrency content? I know the migration (#63) is still in progress.
-2. Does the proposed insertion point — right after "Actors," before "Global Actors" — make sense, or should it live elsewhere?
+This update will be a new section in TSPL's Concurrency chapter (`TSPL.docc/LanguageGuide/Concurrency.md`), inserted right after "Actors" and before "Global Actors".
 
-Also open to feedback on whether the caching example is the right one to lead with, and whether it's worth a note on the never-shipped `@reentrant` direction from SE-0306, or if that's out of scope for TSPL.
+Open to feedback on whether that's the right insertion point, and on whether the caching example is the right one to lead with.
 
 Thanks for reading!
