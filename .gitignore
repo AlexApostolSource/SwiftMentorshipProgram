@@ -1,0 +1,21 @@
+# aicontext:start:generated
+.aicontext/
+.claude/skills/domain-modeling
+.claude/skills/grill-me
+.claude/skills/grill-with-docs
+.claude/skills/grilling
+.claude/skills/handoff
+.claude/skills/teach
+.claude/skills/to-questionnaire
+.claude/skills/wait-what
+.claude/skills/writing-for-agents
+.github/prompts/domain-modeling.prompt.md
+.github/prompts/grill-me.prompt.md
+.github/prompts/grill-with-docs.prompt.md
+.github/prompts/grilling.prompt.md
+.github/prompts/handoff.prompt.md
+.github/prompts/teach.prompt.md
+.github/prompts/to-questionnaire.prompt.md
+.github/prompts/wait-what.prompt.md
+.github/prompts/writing-for-agents.prompt.md
+# aicontext:end:generated

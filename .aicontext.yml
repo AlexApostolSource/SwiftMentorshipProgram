@@ -1,0 +1,16 @@
+providers:
+  - claude
+  - copilot
+  - codex
+include:
+  - mattpocock-skills-ab71b924@productivity/skills/writing-for-agents
+  - mattpocock-skills-ab71b924@productivity/skills/wait-what
+  - mattpocock-skills-ab71b924@productivity/skills/to-questionnaire
+  - mattpocock-skills-ab71b924@productivity/skills/teach
+  - mattpocock-skills-ab71b924@productivity/skills/handoff
+  - mattpocock-skills-ab71b924@productivity/skills/grilling
+  - mattpocock-skills-ab71b924@productivity/skills/grill-me
+  - mattpocock-skills-ab71b924@engineering/skills/grill-with-docs
+  - mattpocock-skills-ab71b924@engineering/skills/domain-modeling
+sources:
+  mattpocock-skills-ab71b924: https://github.com/mattpocock/skills.git
