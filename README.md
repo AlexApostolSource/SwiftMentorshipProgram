@@ -21,3 +21,12 @@ Open question, to be resolved in that thread: whether the PR should target `swif
 ## Process
 
 TSPL contributions of this size require a Swift Forums discussion thread before opening a PR (per `swift-book`'s `CONTRIBUTING.md`), to surface issues before investing time writing. See `forum-post-draft.md` for that pitch.
+
+## How to suggest changes
+
+This repo is public, so you can propose an edit without cloning it:
+
+- **On an open PR**: go to its "Files changed" tab, select the line(s) you want to change, and click "Add a suggestion" to propose exact replacement text. The PR author can accept it with one click.
+- **On any file directly**: click the pencil (edit) icon on the file's GitHub page. If you don't have write access, GitHub forks the repo for you automatically, lets you edit in the browser, and opens a PR back with your change.
+
+Neither path requires write access or a local checkout.
