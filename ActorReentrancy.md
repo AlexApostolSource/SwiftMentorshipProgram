@@ -9,9 +9,12 @@ Draft notes for Alex (not for publication):
   before larger additions like this one.)
 
 - Insertion point: right after the "Actors" section and before "Global
-  Actors". There's currently only an unpublished HTML author-comment
-  mentioning "reentrant code" right after Actors — this section replaces
-  that with real, published prose.
+  Actors" — reentrancy is a core part of how actors behave, so it fits
+  there topically. Separately, there's an unpublished HTML author-comment
+  mentioning "reentrant code" in an outline block after the Global Actors
+  section (before Sendable Types) — this section doesn't replace that
+  comment since it's a different location, but it does cover the same
+  concept with real, published prose.
 
 - Style checked against swift-book/Style.md: active voice, "Swift" as the
   subject (not "the compiler"), "potential suspension point" for await,
@@ -137,9 +140,6 @@ suspending, so any call that reenters the actor sees a coherent picture.
 
 ---
 
-Sources for review / citing in the PR discussion:
-- SE-0306 "Actors": https://github.com/swiftlang/swift-evolution/blob/main/proposals/0306-actors.md
-  (rationale for reentrancy-by-default; the never-shipped `@reentrant` future direction)
-- WWDC21 "Protect mutable state with Swift actors" (session 10133) — canonical
-  worked example this section adapts (image downloader with duplicate work
-  across an await, fixed via an in-flight Task).
+See also:
+- WWDC21 "Protect mutable state with Swift actors" (session 10133):
+  https://developer.apple.com/videos/play/wwdc2021/10133/

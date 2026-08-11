@@ -110,9 +110,6 @@ suspending, so any call that reenters the actor sees a coherent picture.
 
 ---
 
-Sources for review / citing in the PR discussion:
-- SE-0306 "Actors": https://github.com/swiftlang/swift-evolution/blob/main/proposals/0306-actors.md
-  (rationale for reentrancy-by-default; the never-shipped `@reentrant` future direction)
-- WWDC21 "Protect mutable state with Swift actors" (session 10133) — canonical
-  worked example this section adapts (image downloader with duplicate work
-  across an await, fixed via an in-flight Task).
+See also:
+- WWDC21 "Protect mutable state with Swift actors" (session 10133):
+  https://developer.apple.com/videos/play/wwdc2021/10133/
