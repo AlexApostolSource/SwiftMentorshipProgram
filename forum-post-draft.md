@@ -13,7 +13,7 @@ I've drafted a section that:
 - walks through a concrete pitfall: a caching actor that ends up downloading the same resource twice because a second call reenters before the first one has written its result
 - shows a fix pattern: recording that work is in progress *before* the first `await`, so a reentrant call can find and await that record instead of duplicating the work
 
-Full draft here: [gist link]
+Full draft here: https://gist.github.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4
 
 This update will be a new section in TSPL's Concurrency chapter (`TSPL.docc/LanguageGuide/Concurrency.md`), inserted right after "Actors" and before "Global Actors".
 
