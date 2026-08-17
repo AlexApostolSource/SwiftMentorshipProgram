@@ -8,6 +8,7 @@
 .claude/skills/teach
 .claude/skills/to-questionnaire
 .claude/skills/wait-what
+.claude/skills/wizard
 .claude/skills/writing-for-agents
 .github/prompts/domain-modeling.prompt.md
 .github/prompts/grill-me.prompt.md
@@ -17,5 +18,6 @@
 .github/prompts/teach.prompt.md
 .github/prompts/to-questionnaire.prompt.md
 .github/prompts/wait-what.prompt.md
+.github/prompts/wizard.prompt.md
 .github/prompts/writing-for-agents.prompt.md
 # aicontext:end:generated

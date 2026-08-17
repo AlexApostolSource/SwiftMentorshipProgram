@@ -12,5 +12,6 @@ include:
   - mattpocock-skills-ab71b924@productivity/skills/grill-me
   - mattpocock-skills-ab71b924@engineering/skills/grill-with-docs
   - mattpocock-skills-ab71b924@engineering/skills/domain-modeling
+  - mattpocock-skills-ab71b924@engineering/skills/wizard
 sources:
   mattpocock-skills-ab71b924: https://github.com/mattpocock/skills.git
