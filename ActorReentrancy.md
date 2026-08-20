@@ -44,7 +44,8 @@ default for every actor in Swift.
 Reentrancy exists so actors stay responsive. If an actor couldn't be
 reentered while one of its methods was suspended, a single slow operation
 would block every other piece of code that needs to talk to that actor —
-and two actors that both await each other in this way could deadlock.
+and two actors that both await each other in this way could
+[deadlock](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/ThreadSafety/ThreadSafety.html#//apple_ref/doc/uid/10000057i-CH8-SW11).
 Allowing reentrancy avoids that: the actor makes progress on other work
 while a long-running asynchronous operation is in flight.
 
@@ -53,12 +54,10 @@ across an `await`. Code that reads state, awaits, and then acts on what it
 read may find that the state has changed in the meantime, because another
 call ran during the suspension.
 
-Reentrancy can go wrong in more than one way. Consider three variations on
-the same theme.
+### Keeping the actor responsive
 
-### Duplicate work
-
-Consider an actor that downloads and caches images:
+Reentrancy isn't only a hazard to manage — it's also what makes an actor
+usable under load. Consider an actor that downloads and caches images:
 
 ```swift
 actor ImageLoader {
@@ -78,15 +77,55 @@ actor ImageLoader {
 }
 ```
 
-Consider two calls to `image(for:)` with the same `id`, made close together.
-The first call checks `cache`, finds nothing, and reaches the `await` while
-downloading the image. Because the actor is reentrant, the second call can
-run before the first one resumes. It also checks `cache`, also finds
-nothing — the first call hasn't written the result yet — and starts a
-second, redundant download. Both calls eventually write to `cache[id]`, so
-the image ends up downloaded twice and the result depends on which call
-finishes last. Wasteful, but not actually wrong: whichever download
-finishes last leaves a correct image in the cache.
+Consider two calls to `image(for:)` for two *different* ids, made close
+together — a photo grid loading several thumbnails at once, say. The first
+call checks `cache`, finds nothing for `"1234"`, and reaches the `await`
+while downloading. Because the actor is reentrant, the second call doesn't
+wait for that download to finish: it runs immediately, checks `cache` for
+the unrelated `"5678"`, finds nothing there either, and starts its own
+download. Both downloads proceed concurrently instead of one blocking
+behind the other.
+
+Reading and writing `cache` here is always safe: actors allow only one
+task to access their mutable state at a time, which is exactly what makes
+it safe for code in multiple tasks to interact with the same actor
+instance. Reentrancy only changes the order calls can interleave
+*between* suspension points — it never lets two of them access `cache` at
+the same instant.
+
+If both calls reach the `await` before either finishes, one possible
+interleaving prints:
+
+```
+// Prints "Downloading image 1234."
+// Prints "Downloading image 5678."
+// Prints "Cached image 5678."
+// Prints "Cached image 1234."
+```
+
+Nothing about this order matters: `cache["1234"]` and `cache["5678"]` are
+two independent entries, so there's no shared state for the interleaving
+to disturb. A non-reentrant actor would still make the second call wait
+for the first one's entire download to finish, even though the two
+requests share nothing — exactly the unnecessary serialization reentrancy
+exists to avoid.
+
+That's reentrancy working as intended. But the same mechanism can go wrong
+in more than one way, once two calls *do* share state. Consider three
+variations on the same theme.
+
+### Duplicate work
+
+Using the same `image(for:)` from above, consider two calls with the same
+`id`, made close together. The first call checks `cache`, finds nothing,
+and reaches the `await` while downloading the image. Because the actor is
+reentrant, the second call can run before the first one resumes. It also
+checks `cache`, also finds nothing — the first call hasn't written the
+result yet — and starts a second, redundant download. Both calls
+eventually write to `cache[id]`, so the image ends up downloaded twice and
+the result depends on which call finishes last. Wasteful, but not
+actually wrong: whichever download finishes last leaves a correct image
+in the cache.
 
 If both calls reach the `await` before either finishes, one possible
 interleaving prints:

@@ -12,9 +12,6 @@ I've drafted a section that:
 - defines reentrancy and states that it's the default for every actor
 - explains why it exists — so actors stay responsive, and so two actors awaiting each other don't deadlock
 - walks through three separate pitfalls: a caching actor that duplicates work because a reentrant call runs before the first has written its result (wasteful, but not actually wrong on its own — though at scale, that redundant work compounds into a cache stampede/thundering herd, which is a real production failure mode, not just an inefficiency); a price cache where two reentrant fetches for the same symbol can return _different_ prices if the underlying value moved between them, and if the older response happens to write last, it silently overwrites the newer one — corrupting the cache with a stale value indistinguishable from a valid one; and a game's `Player` actor, where two reentrant, individually-lethal attacks both pass an `isAlive` check before either has applied its damage, so both get credited with the killing blow
-- pairs each pitfall immediately with its own fix, rather than listing all three problems first and all three fixes after
-- shows a fix pattern for the first two pitfalls: recording that work is in progress _before_ the first `await`, so a reentrant call can find and await that record and share its result instead of racing its own — applied once to the caching actor and once more, identically, to the price cache
-- shows a second, differently-shaped fix for the third pitfall: committing the entire outcome (the damage and the kill decision) synchronously, before the method's only `await`, so no reentrant call can interleave in between
 
 Full draft here: https://gist.github.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4
 
