@@ -38,7 +38,7 @@ An actor protects its state by allowing only one piece of code to run at a
 time. However, that guarantee doesn't extend across a potential suspension
 point. When a method on an actor reaches an `await`, the actor is free to
 run other work — including another call to the same method — before the
-original call resumes. This behavior is called *reentrancy*, and it's the
+original call resumes. This behavior is called _reentrancy_, and it's the
 default for every actor in Swift.
 
 Reentrancy exists so actors stay responsive. If an actor couldn't be
@@ -77,7 +77,7 @@ actor ImageLoader {
 }
 ```
 
-Consider two calls to `image(for:)` for two *different* ids, made close
+Consider two calls to `image(for:)` for two _different_ ids, made close
 together — a photo grid loading several thumbnails at once, say. The first
 call checks `cache`, finds nothing for `"1234"`, and reaches the `await`
 while downloading. Because the actor is reentrant, the second call doesn't
@@ -90,7 +90,7 @@ Reading and writing `cache` here is always safe: actors allow only one
 task to access their mutable state at a time, which is exactly what makes
 it safe for code in multiple tasks to interact with the same actor
 instance. Reentrancy only changes the order calls can interleave
-*between* suspension points — it never lets two of them access `cache` at
+_between_ suspension points — it never lets two of them access `cache` at
 the same instant.
 
 If both calls reach the `await` before either finishes, one possible
@@ -111,7 +111,7 @@ requests share nothing — exactly the unnecessary serialization reentrancy
 exists to avoid.
 
 That's reentrancy working as intended. But the same mechanism can go wrong
-in more than one way, once two calls *do* share state. Consider three
+in more than one way, once two calls _do_ share state. Consider three
 variations on the same theme.
 
 ### Duplicate work
@@ -148,7 +148,7 @@ anything wrong, but the aggregate can take a system down.
 Making the actor non-reentrant isn't an option — Swift doesn't offer that,
 and losing reentrancy would risk the deadlocks described above. You avoid
 the duplicate download instead by recording that a download is already in
-progress *before* awaiting anything, so a reentrant call finds that record
+progress _before_ awaiting anything, so a reentrant call finds that record
 and shares the result instead of starting its own download:
 
 ```swift
@@ -234,8 +234,8 @@ guaranteed to return the same value — the price moved between them — and
 nothing ties the order the calls write to `cache[symbol]` to the order the
 requests actually went out in.
 
-If the response to the *earlier* request happens to arrive — and get
-written — *after* the response to the later one, its price overwrites the
+If the response to the _earlier_ request happens to arrive — and get
+written — _after_ the response to the later one, its price overwrites the
 newer, correct value. `cache[symbol]` ends up holding a stale price
 indistinguishable from a current one, and every later call to
 `price(for:)` returns it as if it were live.
@@ -254,55 +254,258 @@ wrong: every subsequent caller just receives a wrong number.
 
 #### Avoiding a Stale Overwrite
 
-You avoid the stale overwrite the same way: track the in-progress fetch as
-a `Task`, just as `ImageLoader` does above, so a reentrant call shares
-that task's result instead of racing it with a fetch of its own:
+You avoid the stale overwrite instead by holding a mutex around the
+entire method, so only one call to `price(for:)` — for any symbol — runs
+at a time. Use a small actor as the lock, instead of Swift's standard
+library [`Mutex`](https://developer.apple.com/documentation/synchronization/mutex).
+An actor is already exclusive and already `await`-aware: its own state —
+whether it's `locked`, and who's `waiting` — is protected the same way
+any actor's state is, and a call that finds the lock held doesn't block a
+thread — it suspends on a continuation and gives its thread back, exactly
+like any other `await`:
 
 ```swift
-actor PriceCache {
-    private enum CacheEntry {
-        case inProgress(Task<Double, Error>)
-        case ready(Double)
+actor AsyncMutex {
+    private var locked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !locked {
+            locked = true
+            return
+        }
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiters.append(continuation)
+        }
+
+        locked = true
     }
 
-    private var cache: [String: CacheEntry] = [:]
+    nonisolated func release() {
+        Task { await _release() }
+    }
 
-    func price(for symbol: String) async throws -> Double {
-        if let entry = cache[symbol] {
-            switch entry {
-            case .ready(let price):
-                return price
-            case .inProgress(let task):
-                return try await task.value
-            }
+    private func _release() {
+        if !waiters.isEmpty {
+            waiters.removeFirst().resume()
+            return
         }
 
-        let task = Task {
-            let price = try await fetchPrice(for: symbol)
-            print("Caching \(symbol) at \(price).")
-            return price
-        }
-        cache[symbol] = .inProgress(task)
-
-        do {
-            let price = try await task.value
-            cache[symbol] = .ready(price)
-            return price
-        } catch {
-            cache[symbol] = nil
-            throw error
-        }
+        locked = false
     }
 }
 ```
 
-With only one fetch ever in flight per `symbol`, there's no older result
-left to arrive after a newer one and overwrite it — there's only ever one
-result to write:
+`acquire()` returns immediately if nothing else holds the lock. Otherwise
+it suspends the caller on a continuation and records it in `waiters`, in
+order. `release()` is `nonisolated` so a `defer` can call it without an
+`await`; it hands the lock to the next waiter if there is one, or marks
+the lock free.
+
+Used on its own, `AsyncMutex` serializes any calls that acquire it — the
+lock doesn't care what's inside the critical section, only that at most
+one caller is inside it at a time. To see exactly when a call suspends
+and when it resumes, add a print to each branch of `acquire()` and
+`release()`:
+
+```swift
+actor AsyncMutex {
+    private var locked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !locked {
+            locked = true
+            print("Acquired immediately.")
+            return
+        }
+
+        print("Already locked — suspending.")
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiters.append(continuation)
+        }
+        print("Resumed — handed the lock.")
+
+        locked = true
+    }
+
+    nonisolated func release() {
+        Task { await _release() }
+    }
+
+    private func _release() {
+        if !waiters.isEmpty {
+            print("Waking the next waiter.")
+            waiters.removeFirst().resume()
+            return
+        }
+
+        print("No waiters — freeing the lock.")
+        locked = false
+    }
+}
+
+let lock = AsyncMutex()
+
+func criticalWork(_ label: String) async {
+    await lock.acquire()
+    defer { lock.release() }
+
+    print("\(label) acquired the lock.")
+    try? await Task.sleep(for: .milliseconds(100))
+    print("\(label) released the lock.")
+}
+
+Task { await criticalWork("A") }
+Task { await criticalWork("B") }
+Task { await criticalWork("C") }
+```
+
+Reentrancy is exactly what makes this worth tracing. `acquire()` is
+itself `async`, so if two calls happen close together, the actor can
+reenter: a later call can start running before an earlier one has
+returned. It might look like both calls could slip past `if !locked` and
+both print "Acquired immediately." That never happens, because the check
+and the set — `if !locked { locked = true; ... }` — run synchronously,
+with no `await` between them. Actor isolation guarantees only one call's
+synchronous code runs at a time, so whichever caller reaches that line
+first finishes setting `locked = true` before any other call can even
+read it — every later call is guaranteed to see `locked == true` and take
+the suspending branch instead. Suppose `A` reaches `acquire()` first, and
+`B` and `C` both reach the actor, in that order, while `A` still holds
+the lock. Full trace:
+
+```
+// Prints "Acquired immediately."
+// Prints "A acquired the lock."
+// Prints "Already locked — suspending."   (B queues)
+// Prints "Already locked — suspending."   (C queues)
+// Prints "A released the lock."
+// Prints "Waking the next waiter."        (B, not C — FIFO)
+// Prints "Resumed — handed the lock."
+// Prints "B acquired the lock."
+// Prints "B released the lock."
+// Prints "Waking the next waiter."        (C)
+// Prints "Resumed — handed the lock."
+// Prints "C acquired the lock."
+// Prints "C released the lock."
+// Prints "No waiters — freeing the lock."
+```
+
+`B`'s and `C`'s "suspending" prints both happen while `A` still holds the
+lock, and neither one's "acquired the lock" print happens until *after* a
+"Waking the next waiter." print from whoever currently holds the lock.
+The
+[`CheckedContinuation`](https://developer.apple.com/documentation/swift/checkedcontinuation)
+is what makes that ordering possible: a suspended call to `acquire()`
+genuinely stops running at
+[`await withCheckedContinuation`](https://developer.apple.com/documentation/swift/withcheckedcontinuation(function:_:))
+— not polling, not retrying — and nothing brings it back until
+`_release()` calls `continuation.resume()` on it.
+
+That trace also shows something else worth knowing: `waiters` is an
+ordinary array, appended to with `waiters.append(continuation)` and
+drained with `waiters.removeFirst()`, so waiters are served strictly in
+the order they arrived. `A`'s release wakes `B`, not `C` — even though
+both have been waiting the whole time — because `B` queued first; `B`'s
+own release then wakes `C` in turn. That ordering isn't a coincidence:
+`B`'s and `C`'s checks of `if !locked`, and the `waiters.append` that
+follows, each run as one atomic, uninterruptible step under actor
+isolation, so there's always a well-defined arrival order between them,
+never a tie. `AsyncMutex` is a fair lock as a result — no waiter can be
+starved by a later arrival cutting in line.
+
+> Note: `AsyncMutex` carries the same danger any manual lock does.
+> `acquire()` and `release()` are two independent calls, and nothing ties
+> them together — the type system doesn't stop you from acquiring the
+> lock and never releasing it. Skip the release on an early return, or on
+> a thrown error, and the lock stays held forever: every later call to
+> `acquire()` suspends and never resumes. Always release the lock whenever
+> the current scope exits, no matter how — a `defer` placed immediately
+> after `await lock.acquire()` is the simplest way to guarantee that, as
+> `PriceCache` does below.
+
+`PriceCache` uses one `AsyncMutex` to guard its entire method body:
+
+```swift
+actor PriceCache {
+    private var cache: [String: Double] = [:]
+    private let lock = AsyncMutex()
+
+    func price(for symbol: String) async throws -> Double {
+        await lock.acquire()
+        defer { lock.release() }
+
+        if let cached = cache[symbol] {
+            return cached
+        }
+
+        let price = try await fetchPrice(for: symbol)
+        print("Caching \(symbol) at \(price).")
+        cache[symbol] = price
+        return price
+    }
+}
+```
+
+A second call for the same symbol now waits at `acquire()` instead of
+racing the first: by the time it resumes, `cache[symbol]` already holds
+the result, so it returns immediately without fetching again.
 
 ```
 // Prints "Caching ACME at 105.0."
 ```
+
+The trade-off is that the lock doesn't distinguish between symbols. A call
+for `"MSFT"` made while `"ACME"` is still fetching also waits — even
+though the two share nothing — instead of proceeding concurrently the way
+reentrancy would otherwise allow:
+
+```
+// Prints "Caching ACME at 105.0."
+// Prints "Caching MSFT at 310.0."
+```
+
+`AsyncMutex` fixes the stale overwrite by giving up exactly the
+concurrency the earlier `ImageLoader` example showed off — a reasonable
+trade for a lock this simple and reusable, but a real one. Use it with the
+same caution you'd give any other mutex: nothing here stops two unrelated
+calls from queuing behind each other.
+
+> Note: A lock isn't the only way to avoid this stale overwrite. The same
+> in-progress-`Task` technique `ImageLoader` uses to avoid duplicate work
+> also closes this race: a reentrant call for the same `symbol` finds the
+> `Task` already recorded and awaits its result instead of starting a
+> second fetch, so no two fetches for the same symbol ever compete to
+> write `cache[symbol]`. That fix needs no lock at all, and unlike
+> `AsyncMutex`, it leaves unrelated symbols free to fetch concurrently.
+> `AsyncMutex` is still worth knowing: it's a general-purpose
+> mutual-exclusion primitive, useful for cases — protecting an invariant
+> that spans more than one entry, say — where deduplicating a single key
+> isn't enough.
+
+> Note: The term "mutex" usually refers to a data structure used to
+> synchronize concurrent access to shared state across multiple threads:
+> before touching a non-thread-safe resource, a thread locks the mutex,
+> which blocks that thread until no other thread holds the lock. Once the
+> operation finishes, the thread releases the lock, letting another
+> thread acquire it and proceed. Swift's standard library
+> [`Mutex`](https://developer.apple.com/documentation/synchronization/mutex)
+> can't do that here, though. The race isn't about a single read or write
+> of `cache[symbol]` — actor isolation already makes each of those safe on
+> its own — it's about the gap between checking the cache and writing to
+> it, and closing that gap means holding the lock across the `await` on
+> `fetchPrice`. `Mutex`'s `withLock` closure is synchronous, not `async`,
+> so the compiler rejects an `await` inside it outright: there's no way to
+> hold the lock across that gap at all. Even without that restriction,
+> holding a lock that blocks a thread across a suspension point is
+> dangerous in Swift's cooperative concurrency model: the task holding the
+> lock can suspend and give its thread back to a limited pool, while other
+> tasks block threads waiting for a lock that only a _resumed_ task can
+> release. Enough contention exhausts every thread in the pool and
+> deadlocks the whole program — not just the calls actually competing for
+> the price.
 
 ### A double credit
 
@@ -424,5 +627,8 @@ picture.
 ---
 
 See also:
+
 - WWDC21 "Protect mutable state with Swift actors" (session 10133):
   https://developer.apple.com/videos/play/wwdc2021/10133/
+- SE-0433 "Synchronous Mutual Exclusion Lock":
+  https://github.com/swiftlang/swift-evolution/blob/main/proposals/0433-mutex.md
