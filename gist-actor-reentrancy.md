@@ -11,6 +11,8 @@ run other work — including another call to the same method — before the
 original call resumes. This behavior is called _reentrancy_, and it's the
 default for every actor in Swift.
 
+![Timeline showing the ImageLoader actor's thread held by the first call to image(for:), freed at await downloadImage(for:), then reentered by a second call to the same method while the first is still suspended off-thread](https://gist.githubusercontent.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4/raw/528dedb7bc9a5bc7cad0b5fd61066fa1cf685a24/reentrant-actor-timeline.svg)
+
 The tradeoff is that you can't assume an actor's state stays the same
 across an `await`. Code that reads state, awaits, and then acts on what it
 read may find that the state has changed in the meantime, because another
@@ -103,6 +105,8 @@ load — a cold cache after a deploy, say — redundant downloads for the same
 called a cache stampede or thundering herd. No single request does
 anything wrong, but the aggregate can take a system down.
 
+![Timeline showing two reentrant calls to image(for:) with the same id both missing the cache and downloading the same image independently, overlapping in time, before each writes cache["1234"] on its own](https://gist.githubusercontent.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4/raw/f6cce043a60306b29387ba7ba338cf67ff24eb68/duplicate-work-timeline.svg)
+
 #### Structuring the reentrancy
 
 Making the actor non-reentrant isn't an option — Swift doesn't offer that,
@@ -152,6 +156,8 @@ the entry if the download throws. By the time a second call could reenter
 the actor, the in-progress download is already recorded: that call finds
 the `.inProgress` entry and awaits the same task instead of starting a new
 one, so it receives the same result (or the same error) as the first call.
+
+![Timeline showing the fix: the first call to image(for:) records the download as a shared Task before awaiting it, a reentrant second call finds that same Task and awaits it too, and only one network request happens](https://gist.githubusercontent.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4/raw/e594d64fb1a505836ebef30b796aaf265d93439b/shared-task-timeline.svg)
 
 Even if both calls reach the actor before either finishes, only the first
 one starts a download:
@@ -209,6 +215,8 @@ started them, one possible interleaving prints:
 was the more recent one. There's no error and no signal that anything went
 wrong: every subsequent caller just receives a wrong number.
 
+![Timeline showing the stale-overwrite bug: two reentrant calls to price(for: ACME) fetch concurrently, the second call's fetch resolves first and writes the correct price, and the first call's slower fetch resolves afterward and silently overwrites it with a stale price](https://gist.githubusercontent.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4/raw/9efb21c370d2d3e11d9aae198e81ab720a92292f/stale-overwrite-timeline.svg)
+
 ### AsyncMutex
 
 Holding a mutex around the entire method, so only one call to `price(for:)` — for any symbol — runs
@@ -259,11 +267,11 @@ order. `release()` is `nonisolated` so a `defer` can call it without an
 `await`; it hands the lock to the next waiter if there is one, or marks
 the lock free.
 
-Used on its own, `AsyncMutex` serializes any calls that acquire it — the
-lock doesn't care what's inside the critical section, only that at most
-one caller is inside it at a time. To see exactly when a call suspends
-and when it resumes, add a print to each branch of `acquire()` and
-`release()`:
+The next example showcases how `AsyncMutex` works on its own: it
+serializes any calls that acquire it, regardless of what runs inside
+the critical section — the only guarantee is that at most one caller is
+inside it at a time. To see exactly when a call suspends and when it
+resumes, add a print to each branch of `acquire()` and `release()`:
 
 ```swift
 actor AsyncMutex {
@@ -349,16 +357,17 @@ the lock. Full trace:
 // Prints "No waiters — freeing the lock."
 ```
 
-`B`'s and `C`'s "suspending" prints both happen while `A` still holds the
-lock, and neither one's "acquired the lock" print happens until *after* a
-"Waking the next waiter." print from whoever currently holds the lock.
-The
+`B` and `C` both suspend while `A` still holds the lock, as their
+"suspending" prints show, and neither one actually acquires the lock
+until _after_ whichever call currently holds it releases. The
 [`CheckedContinuation`](https://developer.apple.com/documentation/swift/checkedcontinuation)
 is what makes that ordering possible: a suspended call to `acquire()`
-genuinely stops running at
-[`await withCheckedContinuation`](https://developer.apple.com/documentation/swift/withcheckedcontinuation(function:_:))
-— not polling, not retrying — and nothing brings it back until
-`_release()` calls `continuation.resume()` on it.
+stops running entirely at
+[`await withCheckedContinuation`](<https://developer.apple.com/documentation/swift/withcheckedcontinuation(function:_:)>)
+— it doesn't poll or retry — and remains suspended until `_release()`
+calls `continuation.resume()` on it.
+
+![Timeline showing three tasks queuing for the same AsyncMutex, with FIFO ordering deciding who gets served next when the lock is released](https://gist.githubusercontent.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4/raw/0261d6b4c08f1c44a0f15cbba1494c3af5890094/fair-lock-timeline.svg)
 
 That trace also shows something else worth knowing: `waiters` is an
 ordinary array, appended to with `waiters.append(continuation)` and
@@ -423,19 +432,23 @@ reentrancy would otherwise allow:
 // Prints "Caching MSFT at 310.0."
 ```
 
+![Timeline showing PriceCache's AsyncMutex serializing calls for unrelated symbols, since the lock guards the whole method regardless of which symbol is requested](https://gist.githubusercontent.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4/raw/921e3f6fb79ffc54067b9167fd4264e588806bf9/one-lock-every-symbol.svg)
+
 `AsyncMutex` fixes the stale overwrite by giving up exactly the
-concurrency the earlier `ImageLoader` example showed off — a reasonable
+concurrency the earlier `ImageLoader` example demonstrated — a reasonable
 trade for a lock this simple and reusable, but a real one. Use it with the
-same caution you'd give any other mutex: nothing here stops two unrelated
+same caution as any other mutex: nothing here prevents two unrelated
 calls from queuing behind each other.
 
 > Note: A lock isn't the only way to avoid this stale overwrite. The same
 > in-progress-`Task` technique `ImageLoader` uses to avoid duplicate work
 > also closes this race: a reentrant call for the same `symbol` finds the
 > `Task` already recorded and awaits its result instead of starting a
-> second fetch, so no two fetches for the same symbol ever compete to
-> write `cache[symbol]`. That fix needs no lock at all, and unlike
-> `AsyncMutex`, it leaves unrelated symbols free to fetch concurrently.
+> second fetch. That's what actually fixes it — with at most one fetch in
+> flight per symbol, there's only ever one price to write, so no second,
+> slower response is left around to overwrite a newer one. That fix needs
+> no lock at all, and unlike `AsyncMutex`, it leaves unrelated symbols
+> free to fetch concurrently.
 
 > Note: The term "mutex" usually refers to a data structure used to
 > synchronize concurrent access to shared state across multiple threads:
@@ -515,6 +528,8 @@ interleaving prints:
 
 Two different attackers, both credited for the same kill.
 
+![Timeline showing two reentrant calls to takeDamage(_:from:) against the same Player — Vane's call checks isAlive, finds it true, and suspends; Rowan's call reenters before Vane resumes, checks isAlive against the same still-positive health, and also suspends; both later resume, both subtract from health, and both report landing the killing blow](https://gist.githubusercontent.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4/raw/956c76651e2525f8061d1910d98ced34673e56e5/double-credit-timeline.svg)
+
 #### Avoiding a Double Credit
 
 One solution to avoid the double credit instead is committing the
@@ -563,6 +578,8 @@ Even if two lethal attacks reach the actor close together:
 // Prints "Vane landed the killing blow."
 ```
 
+![Timeline showing two reentrant calls to takeDamage(_:from:) against the same Player — Vane's call finds isAlive true, subtracts from health, and suspends at its only await. While she is suspended, Rowan's call reenters, but its own isAlive check now reads false, because Vane already subtracted from health — so Rowan's call returns immediately with no credit, never reaching its own subtract or an await. Only Vane resumes and reports landing the killing blow.](https://gist.githubusercontent.com/AlexApostolSource/39f5411d723246325ec853f0e3bcf6f4/raw/c3967f756afc6212b491182539fb4fb6423f00f5/double-credit-fix-timeline.svg)
+
 As a general rule, don't assume that state you read before an `await` is
 still valid after it. If a method needs to act on state across a
 suspension point, re-check that state after the `await`, or — as in the
@@ -573,7 +590,7 @@ picture.
 > Note: Reentrancy only applies at potential suspension points. Code that
 > runs between two `await` expressions — or that never awaits at all —
 > still runs without interruption, exactly as described in
-> <doc:Concurrency#Defining-and-Calling-Asynchronous-Functions>.
+> [Defining and Calling Asynchronous Functions](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/#Defining-and-Calling-Asynchronous-Functions).
 
 ---
 

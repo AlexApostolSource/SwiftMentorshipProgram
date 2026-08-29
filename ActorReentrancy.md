@@ -303,11 +303,11 @@ order. `release()` is `nonisolated` so a `defer` can call it without an
 `await`; it hands the lock to the next waiter if there is one, or marks
 the lock free.
 
-Used on its own, `AsyncMutex` serializes any calls that acquire it — the
-lock doesn't care what's inside the critical section, only that at most
-one caller is inside it at a time. To see exactly when a call suspends
-and when it resumes, add a print to each branch of `acquire()` and
-`release()`:
+The next example showcases how `AsyncMutex` works on its own: it
+serializes any calls that acquire it, regardless of what runs inside
+the critical section — the only guarantee is that at most one caller is
+inside it at a time. To see exactly when a call suspends and when it
+resumes, add a print to each branch of `acquire()` and `release()`:
 
 ```swift
 actor AsyncMutex {
@@ -393,16 +393,16 @@ the lock. Full trace:
 // Prints "No waiters — freeing the lock."
 ```
 
-`B`'s and `C`'s "suspending" prints both happen while `A` still holds the
-lock, and neither one's "acquired the lock" print happens until *after* a
-"Waking the next waiter." print from whoever currently holds the lock.
-The
+`B` and `C` both suspend while `A` still holds the lock, as their
+"suspending" prints show, and neither one actually acquires the lock
+until *after* whichever call currently holds it prints "Waking the next
+waiter." The
 [`CheckedContinuation`](https://developer.apple.com/documentation/swift/checkedcontinuation)
 is what makes that ordering possible: a suspended call to `acquire()`
-genuinely stops running at
+stops running entirely at
 [`await withCheckedContinuation`](https://developer.apple.com/documentation/swift/withcheckedcontinuation(function:_:))
-— not polling, not retrying — and nothing brings it back until
-`_release()` calls `continuation.resume()` on it.
+— it doesn't poll or retry — and remains suspended until `_release()`
+calls `continuation.resume()` on it.
 
 That trace also shows something else worth knowing: `waiters` is an
 ordinary array, appended to with `waiters.append(continuation)` and
@@ -468,22 +468,29 @@ reentrancy would otherwise allow:
 ```
 
 `AsyncMutex` fixes the stale overwrite by giving up exactly the
-concurrency the earlier `ImageLoader` example showed off — a reasonable
+concurrency the earlier `ImageLoader` example demonstrated — a reasonable
 trade for a lock this simple and reusable, but a real one. Use it with the
-same caution you'd give any other mutex: nothing here stops two unrelated
+same caution as any other mutex: nothing here prevents two unrelated
 calls from queuing behind each other.
 
 > Note: A lock isn't the only way to avoid this stale overwrite. The same
 > in-progress-`Task` technique `ImageLoader` uses to avoid duplicate work
 > also closes this race: a reentrant call for the same `symbol` finds the
 > `Task` already recorded and awaits its result instead of starting a
-> second fetch, so no two fetches for the same symbol ever compete to
-> write `cache[symbol]`. That fix needs no lock at all, and unlike
-> `AsyncMutex`, it leaves unrelated symbols free to fetch concurrently.
-> `AsyncMutex` is still worth knowing: it's a general-purpose
-> mutual-exclusion primitive, useful for cases — protecting an invariant
-> that spans more than one entry, say — where deduplicating a single key
-> isn't enough.
+> second fetch. That's what actually fixes it — with at most one fetch in
+> flight per symbol, there's only ever one price to write, so no second,
+> slower response is left around to overwrite a newer one. That fix needs
+> no lock at all, and unlike `AsyncMutex`, it leaves unrelated symbols
+> free to fetch concurrently.
+>
+> `AsyncMutex` is still worth knowing, but not because the `Task`-recording
+> technique falls short for a single key — it closes this race just as
+> completely. The difference is scope: a recorded `Task` only ever
+> protects the one dictionary entry it's stored in, so it has nothing to
+> say about an invariant that spans more than one entry at once.
+> `AsyncMutex` protects the entire critical section regardless of which
+> key is involved, which is what you reach for once the thing you're
+> protecting isn't cleanly per-key.
 
 > Note: The term "mutex" usually refers to a data structure used to
 > synchronize concurrent access to shared state across multiple threads:
